@@ -7,14 +7,9 @@ from time import sleep
 import numpy as np
 from numpy import random
 import cv2
+import matplotlib.pyplot as plt
 
 target_image = np.array([], dtype=np.uint8)
-
-
-def clamp(value):
-    if value > 255:
-        return 255
-    return value
 
 
 class Gene:
@@ -32,11 +27,11 @@ class Gene:
 
         return child1, child2
 
-    def mutate(self, mutation_rate):
-        mutation_indices = np.random.randint(0, len(target_image), int(len(target_image) * mutation_rate))
-        for i in mutation_indices:
-            self.img[i] = clamp(self.img[i] + random.randint(-10,11))
-
+    def mutate(self, mutation_rates):
+        rand_values = random.random(size=target_image.shape)  # speed drawback..
+        mut_indices = rand_values < mutation_rates
+        self.img[mut_indices] += random.randint(-8, 9, size=np.count_nonzero(mut_indices))
+        self.img = np.clip(self.img, 0, 255)
         # for i in range(len(target_image)):
         #    if random.random() < mutation_rate:
         #        self.img[i] = random.randint(0, 1)
@@ -49,8 +44,8 @@ class Gene:
         return new_gene
 
     def calc_score(self):
-        and_link = self.img & target_image
-        return np.sum(and_link)
+        diff = self.img - target_image
+        return len(target_image) * 255 - np.sum(np.abs(diff))
 
 
 @click.command()
@@ -63,11 +58,24 @@ class Gene:
                                       "if set 'img-len' will be ignored!")
 @click.option('-s', '--silence', is_flag=True, help="silences the output fully")
 @click.option('-v', '--verbose', is_flag=True, help="shows verbose information for the algorithmic process")
-def main(pop_size: int, gen_count: int, mut_rate: float, image_len: int, image: str, silence: bool, verbose: bool):
+@click.option('-plt', '--plotting', is_flag=True, help="plots the current score of the top gene")
+def main(pop_size: int, gen_count: int, mut_rate: float, image_len: int, image: str, silence: bool, verbose: bool,
+         plotting: bool):
     """Simple program that runs a genetic algorithm over a population of randomly generated images
        with the task to optimise these images so that it matches the provided target image"""
 
     setup(image, image_len)
+    x = []
+    y = []
+    plt.ion()
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    li, = ax.plot(x, y)
+
+    if plotting:
+        # draw and show it
+        fig.canvas.draw()
+        plt.show(block=False)
 
     if not silence:
         print("image length: {}".format(str(len(target_image))))
@@ -80,6 +88,8 @@ def main(pop_size: int, gen_count: int, mut_rate: float, image_len: int, image: 
 
     for i in range(pop_size):
         pop.append(Gene.initialize())
+
+    mutation_rates = np.array([mut_rate] * len(target_image))
 
     top_gene = Gene()
     gen = 0
@@ -106,23 +116,32 @@ def main(pop_size: int, gen_count: int, mut_rate: float, image_len: int, image: 
                     top_gene = gene
 
             current = datetime.now()
-            if verbose:
+
+            if not silence:
                 img = np.array(top_gene.img.reshape(img_shape), dtype=np.uint8)
                 target_img = np.array(target_image.reshape(img_shape), dtype=np.uint8)
                 vis = np.concatenate((img, target_img), axis=1)
-                vis = cv2.resize(vis, (vis.shape[1] * 4, vis.shape[0] * 4))
+                vis = cv2.resize(vis, (vis.shape[1] * 4, vis.shape[0] * 4), interpolation=cv2.INTER_AREA)
                 cv2.imshow("gen", vis)
                 cv2.waitKey(1)
-
+            if verbose:
                 print("{:10.2f}ms - {:5} gens - score {}/{}".format((current - start).total_seconds() * 1000,
                                                                     gen, top_gene.score, len(target_image) * 255))
+            if plotting:
+                x.append(gen)
+                y.append(top_gene.score)
+                li.set_xdata(x)
+                li.set_ydata(y)
+                ax.relim()
+                ax.autoscale_view(True, True, True)
+                fig.canvas.draw()
 
             new_pop = []
             for k in range(int(len(pop) / 2)):  # each gene
                 child_indices = random.randint(0, len(pop), 4)
                 children = [pop[index] for index in child_indices]
-                child1 = max(children[2:], key=lambda x: x.fitness)
-                child2 = max(children[:2], key=lambda x: x.fitness)
+                child1 = max(children[2:], key=lambda c: c.fitness)
+                child2 = max(children[:2], key=lambda c: c.fitness)
                 # for i in range(2):  # 2 times
                 #     rand = random.random()
                 #     sum_up = 0
@@ -132,27 +151,21 @@ def main(pop_size: int, gen_count: int, mut_rate: float, image_len: int, image: 
                 #             children.append(pop[j])
                 #             break
                 child1, child2 = child1.crossover(child2)
-                child1.mutate(mut_rate)
-                child2.mutate(mut_rate)
+                child1.mutate(mutation_rates)
+                child2.mutate(mutation_rates)
                 new_pop.append(child1)
                 new_pop.append(child2)
 
             pop[random.randint(0, len(pop))] = top_gene
             pop = new_pop
-        t.close()
-        end = datetime.now()
+
+    t.close()
+    end = datetime.now()
 
     sleep(1)
     print("{:10.2f}ms - {:5} gens - score {}/{}".format((end - start).total_seconds() * 1000, gen,
                                                         top_gene.score,
                                                         len(target_image)))
-
-
-def coloring(x):
-    if x > 150:
-        return 1
-
-    return 0
 
 
 def setup(image, image_len):
